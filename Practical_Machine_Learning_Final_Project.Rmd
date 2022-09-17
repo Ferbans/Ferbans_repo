@@ -1,0 +1,293 @@
+---
+title: "Practical Machine Learning Project"
+author: "Fernando Rubio"
+date: "17/09/2022"
+output:
+  html_document:
+    toc: yes
+    toc_float: TRUE
+    toc_depth: 4
+---
+
+***
+
+## Summary
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+The goal of our project is to predict the manner in which they did the exercise. For this purpose, we will develop a prediction model based on the techniques learned throughout the course.
+
+***
+
+## Libraries
+
+We load the R packages that we will need to need to use.
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(error = FALSE, message = FALSE, warning = FALSE, echo = TRUE, include = TRUE)
+library(AppliedPredictiveModeling)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(gbm)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(corrplot)
+
+```
+
+***
+
+## Reading and exploring data
+
+We start our project by reading data and doing a brief exploratory analysis of the training dataset. This will help us choose the technique of the models that we will develop.
+
+```{r read}
+# At first, we clear the environment
+rm(list = ls())
+# We read the two datasets
+training_df <- read.csv("pml-training.csv")
+testing_df <- read.csv("pml-testing.csv")
+
+```
+
+The training dataset has `r nrow(training_df)` rows and `r ncol(training_df)` colums. These are the first 6 rows:
+
+```{r}
+training_df %>% 
+  head() %>% 
+  kable(caption = "First 6 rows of training dataset") %>% 
+  kable_styling("hover") %>% 
+  scroll_box(height = "300px")
+
+```
+
+As we can see, there are some descriptive columns that are not going to be used in models:
+
+- X
+
+- user_name
+
+- raw_timestamp_part_1
+
+- raw_timestamp_part_2
+
+- new_window
+
+- num_window
+
+```{r descriptive_cols}
+descriptive_cols <- training_df %>% 
+  select(1:6) %>% 
+  colnames()
+
+```
+
+The following table shows the number of column of each class:
+
+```{r}
+sapply(training_df, function(x) class(x)) %>% 
+  table() %>% 
+  as.data.frame.table() %>% 
+  kable(caption = "Columns of each class") %>% 
+  kable_styling("hover", full_width = F)
+
+```
+
+The test dataset has the same structure and has `r nrow(testing_df)` rows and `r ncol(testing_df)` columns.
+
+
+***
+
+## Cleaning and processing data
+
+We have observed that there are some missing values in some columns. We will discart the columns with too many missing values (more than 90% of missing values).
+
+```{r}
+missing_ratio <- sapply(training_df, function(x) sum(is.na(x) | x == "")/length(x))
+discard_list <- names(missing_ratio)[missing_ratio > 0.9]
+
+training_df <- training_df %>% 
+  select(-all_of(discard_list))
+
+testing_df <- testing_df %>% 
+  select(-all_of(discard_list))
+
+```
+
+Now, we have `r ncol(training_df)` columns in our datasets. All possible predictor variables are numeric. Here we can see a correlation plot:
+
+```{r, fig.height=10, fig.width=10}
+cor_table <- cor(
+  training_df %>% 
+    select_if(is.numeric)
+)
+
+corrplot(cor_table, order = "hclus", tl.col = "black", addrect = 10)
+
+```
+
+We split our training set into two datasets:
+
+- Building data set (70%), with 2 subsets:
+
+    + Training data set (70%)
+    
+    + Testing data set (30%)
+
+- Validation data set (30%)
+
+```{r}
+set.seed(1531)
+training_df$classe <- as.factor(training_df$classe)
+
+in_build <- createDataPartition(y = training_df$classe, p = 0.7, list = F)
+build_data <- training_df[in_build,] %>% 
+  select(-all_of(descriptive_cols)) %>% 
+  as.data.frame()
+validation <- training_df[-in_build,] %>% 
+  select(-all_of(descriptive_cols)) %>% 
+  as.data.frame()
+
+in_train <- createDataPartition(y = build_data$classe, p = 0.7, list = F)
+training <- build_data[in_train,] %>% 
+  as.data.frame()
+testing <- build_data[-in_train,] %>% 
+  as.data.frame()
+
+```
+
+***
+
+## Modeling
+
+We fit models applying 3 different techniques:
+
+1. Random forest
+
+2. Generalized Boosted Model (GBM)
+
+3. Linear Discriminat Analysis (LDA)
+
+For all these models, we will use a cross validation method, with 5 folds.
+
+```{r control}
+control <- trainControl(method = "cv", number = 5)
+
+```
+
+Then, we will combine the models creating a new random forest model using the predictions of previous models.
+
+***
+
+### Random forest
+
+The following figure summarizes the developed model:
+
+```{r RF, include = FALSE}
+model_rf <- train(classe ~ ., data = training, method = "rf", trControl = control)
+```
+
+
+```{r, fig.width=7, fig.height=3}
+plot(model_rf)
+
+```
+
+We present the confusion matrix and some metrics.
+
+```{r}
+pred_rf <- predict(model_rf, testing)
+pred_rf_val <- predict(model_rf, validation)
+result_rf_val <- confusionMatrix(pred_rf_val, validation$classe)
+result_rf_val
+
+```
+
+
+***
+
+### GBM
+
+The following figure summarizes the developed model:
+
+```{r GBM, include = FALSE}
+model_gbm <- train(classe ~ ., data = training, method = "gbm", trControl = control)
+
+```
+
+
+```{r, fig.width=7, fig.height=5}
+plot(model_gbm)
+
+```
+
+
+We present the confusion matrix and some metrics.
+
+```{r}
+pred_gbm <- predict(model_gbm, testing)
+pred_gbm_val <- predict(model_gbm, validation)
+result_gbm_val <- confusionMatrix(pred_gbm_val, validation$classe)
+result_gbm_val
+
+```
+
+### LDA
+
+We present the confusion matrix and some metrics.
+
+```{r LDA}
+model_lda <- train(classe ~ ., data = training, method = "lda", trControl = control)
+pred_lda <- predict(model_lda, testing)
+pred_lda_val <- predict(model_lda, validation)
+result_lda_val <- confusionMatrix(pred_lda_val, validation$classe)
+result_lda_val
+
+```
+
+***
+
+### Combining models
+
+We present the confusion matrix and some metrics.
+
+```{r}
+pred_data <- data.frame(pred_rf, pred_gbm, pred_lda, classe = testing$classe)
+model_comb <- train(classe ~ ., method = "rf", data = pred_data, trControl = control)
+
+pred_data_val <- data.frame(pred_rf = pred_rf_val, pred_gbm = pred_gbm_val, pred_lda = pred_lda_val)
+pred_comb_val <- predict(model_comb, pred_data_val)
+result_comb_val <- confusionMatrix(pred_comb_val, validation$classe)
+result_comb_val
+
+```
+
+```{r, echo = FALSE, eval = TRUE}
+# Guardamos los modelos
+final_pred_rf <- predict(model_rf, testing_df)
+save(model_rf, final_pred_rf, file = "model_rf.rda")
+
+final_pred_gbm <- predict(model_gbm, testing_df)
+save(model_gbm, final_pred_gbm, file = "model_gbm.rda")
+
+final_pred_lda <- predict(model_lda, testing_df)
+save(model_lda, final_pred_lda, file = "model_lda.rda")
+
+pred_data_test <- data.frame(pred_rf = final_pred_rf, pred_gbm = final_pred_gbm, pred_lda = final_pred_lda)
+final_pred_comb <- predict(model_comb, pred_data_test)
+save(model_comb, final_pred_comb, file = "model_comb.rda")
+
+```
+
+
+***
+
+## Conclusions
+
+We have adjusted three models and used them to assemble a fourth model. The model with the best results has been the last one, with an accuracy of `r round(unname(result_comb_val$overall[1]), 4)`.
+
+***
+
